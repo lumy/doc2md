@@ -133,6 +133,15 @@ def make_toc(sections):
         refs.append("    "*(ind-outer) + "- [%s](#%s)" % (sec, ref))
     return refs
 
+type_url = [
+  ("bool", "[bool](https://docs.python.org/2/library/stdtypes.html#boolean-values)"),
+  ("str", "[str](https://docs.python.org/2/library/stdtypes.html#sequence-types-str-unicode-list-tuple-bytearray-buffer-xrange)"),
+  ("int", "[int](https://docs.python.org/2/library/stdtypes.html#numeric-types-int-float-long-complex)"),
+  ("float", "[float](https://docs.python.org/2/library/stdtypes.html#numeric-types-int-float-long-complex)"),
+  ("list", "[list](https://docs.python.org/2/tutorial/datastructures.html#more-on-lists)"),
+  ("Exception", "[Exception](https://docs.python.org/2/tutorial/errors.html)"),
+]
+
 def _doc2md(lines, shiftlevel=0):
     md = []
     is_code = False
@@ -156,6 +165,24 @@ def _doc2md(lines, shiftlevel=0):
         elif shiftlevel != 0 and is_heading(line):
             level, title = get_heading(line)
             md += [make_heading(level + shiftlevel, title)]
+        elif trimmed.startswith(":param"):
+            line = line.replace(":param", "-")
+            for c_type, url in type_url:
+              if c_type in line:
+                line = line.replace(c_type, url)
+            md += [line]
+        elif trimmed.startswith(":throw"):
+            line = line.replace(":throw", "- throw")
+            for c_type, url in type_url:
+              if c_type in line:
+                line = line.replace(c_type, url)
+            md += ["", line]
+        elif trimmed.startswith(":return"):
+            line = line.replace(":return", "- return")
+            for c_type, url in type_url:
+              if c_type in line:
+                line = line.replace(c_type, url)
+            md += ["", line]
         else:
             md += [line]
     if is_code:
@@ -166,9 +193,10 @@ def doc2md(docstr, title, min_level=1, more_info=False, toc=True):
     """
     Convert a docstring to a markdown text.
     """
+    if docstr is None:
+        return ([], [])
     text = doctrim(docstr)
     lines = text.split('\n')
-
     sections = find_sections(lines)
     if sections:
         level = min(n for n,t in sections) - 1
@@ -180,13 +208,12 @@ def doc2md(docstr, title, min_level=1, more_info=False, toc=True):
         shiftlevel = min_level - level
         level = min_level
         sections = [(lev+shiftlevel, tit) for lev,tit in sections]
+    md = [ make_heading(level, title), ""]
 
-    md = [
-        make_heading(level, title),
-        "",
-        lines.pop(0),
-        ""
-    ]
+
+    while len(lines) > 0 and not lines[0].lstrip().startswith(":"):
+      md.append(lines.pop(0))
+    md.append("")
     if toc:
         md += make_toc(sections)
     md += _doc2md(lines, shiftlevel)
@@ -195,13 +222,28 @@ def doc2md(docstr, title, min_level=1, more_info=False, toc=True):
     else:
         return "\n".join(md)
 
+def class2md(cls, title, min_level=1, more_info=False, toc=True):
+    """
+    Convert a class to a markdown text.
+    """
+
+    md, sec = doc2md(cls.__doc__, "Class: " + title,
+                     min_level=min_level + 1, more_info=True, toc=False)
+    for entry in sorted(inspect.getmembers(cls)):
+      if entry[0].startswith("__") and entry[0].endswith("__"):
+        continue
+      c_md, c_sec = doc2md(entry[1].__doc__, entry[0], min_level=min_level+2, more_info=True, toc=False)
+      md += c_md + ["\n"]
+      sec += c_sec
+    return md, sec
+
 def mod2md(module, title, title_api_section, toc=True):
     """
     Generate markdown document from module, including API section.
     """
     docstr = module.__doc__
 
-    text = doctrim(docstr)
+    text = doctrim(docstr) if docstr is not None else ""
     lines = text.split('\n')
 
     sections = find_sections(lines)
@@ -212,15 +254,19 @@ def mod2md(module, title, title_api_section, toc=True):
 
     api_md = []
     api_sec = []
-    if title_api_section and module.__all__:
+    if title_api_section and module.__md__:
         sections.append((level+1, title_api_section))
-        for name in module.__all__:
+        for name in module.__md__:
             api_sec.append((level+2, name))
             api_md += ['', '']
             entry = module.__dict__[name]
-            if entry.__doc__:
+            if inspect.isclass(entry):
+                md, sec = class2md(entry, name, min_level=level + 1, more_info=True, toc=False)
+                api_sec += sec
+                api_md += md
+            elif entry.__doc__:
                 md, sec = doc2md(entry.__doc__, name,
-                        min_level=level+2, more_info=True, toc=False)
+                        min_level=level+1, more_info=True, toc=False)
                 api_sec += sec
                 api_md += md
 
@@ -249,7 +295,6 @@ def mod2md(module, title, title_api_section, toc=True):
         md += ['']
         md += make_toc(api_sec)
     md += api_md
-
     return "\n".join(md)
 
 def main(args=None):
