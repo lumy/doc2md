@@ -115,6 +115,8 @@ def find_sections(lines):
     sections = []
     for line in lines:
         if is_heading(line):
+            if not line.startswith("##"):
+                raise Exception("Shouldn't be a bigger header")
             sections.append(get_heading(line))
     return sections
 
@@ -189,30 +191,48 @@ def _doc2md(lines, shiftlevel=0):
         md += doc_code_block(code, language)
     return md
 
-def doc2md(docstr, title, min_level=1, more_info=False, toc=True):
+def doc2md(module, title, min_level=1, more_info=False, toc=True):
     """
     Convert a docstring to a markdown text.
     """
-    if docstr is None:
-        return ([], [])
+    docstr = module.__doc__
+    if module.__doc__ is None:
+      docstr = ""
+
     text = doctrim(docstr)
     lines = text.split('\n')
     sections = find_sections(lines)
     if sections:
-        level = min(n for n,t in sections) - 1
+        level = min(n for n,t in sections)
     else:
-        level = 1
+        level = min_level
 
     shiftlevel = 0
     if level < min_level:
         shiftlevel = min_level - level
         level = min_level
         sections = [(lev+shiftlevel, tit) for lev,tit in sections]
+
+    if inspect.isfunction(module):
+        t = inspect.getsource(module).split("\n")[0]
+        i = 0 # Use when there is @ or other stuff on the top of the function
+        while not t.lstrip().startswith("def"):
+            t = inspect.getsource(module).split("\n")[i]
+            i += 1
+        title = t[t.find(title):t.find(":")]
+    elif inspect.isclass(module):
+        t = inspect.getsource(module.__init__).split("\n")[0]
+        title = t[t.find(title):t.find(":")]
+    elif inspect.ismethod(module):
+        t = inspect.getsource(module).split("\n")[0]
+        title = t[t.find(title):t.find(":")]
+    else:
+        raise Exception("Not Known type ? %s" % module)
+
     md = [ make_heading(level, title), ""]
 
-
     while len(lines) > 0 and not lines[0].lstrip().startswith(":"):
-      md.append(lines.pop(0))
+      md.append("    " + lines.pop(0).lstrip())
     md.append("")
     if toc:
         md += make_toc(sections)
@@ -227,19 +247,19 @@ def class2md(cls, title, min_level=1, more_info=False, toc=True):
     Convert a class to a markdown text.
     """
 
-    md, sec = doc2md(cls.__doc__, "Class: " + title,
-                     min_level=min_level + 1, more_info=True, toc=False)
+    md, sec = doc2md(cls, title,
+                     min_level=min_level, more_info=True, toc=False)
     for entry in sorted(inspect.getmembers(cls)):
       if entry[0].startswith("__") and entry[0].endswith("__"):
         continue
-      c_md, c_sec = doc2md(entry[1].__doc__, entry[0], min_level=min_level+2, more_info=True, toc=False)
+      c_md, c_sec = doc2md(entry[1], entry[0], min_level=min_level+2, more_info=True, toc=False)
       md += c_md + ["\n"]
       sec += c_sec
     return md, sec
 
-def mod2md(module, title, title_api_section, toc=True):
+def mod2md(module, title, toc=True):
     """
-    Generate markdown document from module, including API section.
+    Generate markdown document from module.
     """
     docstr = module.__doc__
 
@@ -254,19 +274,23 @@ def mod2md(module, title, title_api_section, toc=True):
 
     api_md = []
     api_sec = []
-    if title_api_section and module.__md__:
-        sections.append((level+1, title_api_section))
+    class_md = []
+    class_sec = []
+    if module.__md__:
+
+        sections.append((level+1, "API"))
+
         for name in module.__md__:
-            api_sec.append((level+2, name))
-            api_md += ['', '']
             entry = module.__dict__[name]
             if inspect.isclass(entry):
-                md, sec = class2md(entry, name, min_level=level + 1, more_info=True, toc=False)
-                api_sec += sec
-                api_md += md
+                md, sec = class2md(entry, name, min_level=level, more_info=True, toc=False)
+                class_sec += sec
+                class_md += md
             elif entry.__doc__:
-                md, sec = doc2md(entry.__doc__, name,
-                        min_level=level+1, more_info=True, toc=False)
+                api_sec.append((level + 2, name))
+                api_md += ['', '']
+                md, sec = doc2md(entry, name,
+                        min_level=level+2, more_info=True, toc=False)
                 api_sec += sec
                 api_md += md
 
@@ -286,15 +310,31 @@ def mod2md(module, title, title_api_section, toc=True):
     md += _doc2md(lines)
 
     # API section
-    md += [
+    if len(class_md) > 0:
+      md += [
         '',
         '',
-        make_heading(level+1, title_api_section),
-    ]
-    if toc:
-        md += ['']
-        md += make_toc(api_sec)
-    md += api_md
+        make_heading(level, "Class"),
+      ]
+
+      if toc:
+          md += ['']
+          md += make_toc(class_sec)
+      md += class_md
+
+    if len(api_md) > 0:
+      md += [
+        '',
+        '',
+        make_heading(level, "Functions"),
+      ]
+
+      if toc:
+          md += ['']
+          md += make_toc(api_sec)
+      md += api_md
+
+
     return "\n".join(md)
 
 def main(args=None):
@@ -341,7 +381,7 @@ def main(args=None):
     module = importlib.import_module(mod_name)
 
     if args.all:
-        print(mod2md(module, title, 'API', toc=args.toc))
+        print(mod2md(module, title, toc=args.toc))
 
     else:
         if args.entry:
