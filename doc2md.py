@@ -172,24 +172,24 @@ def _doc2md(lines, shiftlevel=0):
             for c_type, url in type_url:
               if c_type in line:
                 line = line.replace(c_type, url)
-            md += [line]
+            md += [line.lstrip()]
         elif trimmed.startswith(":throw"):
             line = line.replace(":throw", "- throw")
             for c_type, url in type_url:
               if c_type in line:
                 line = line.replace(c_type, url)
-            md += ["", line]
+            md += ["", line.lstrip()]
         elif trimmed.startswith(":return"):
             line = line.replace(":return", "- return")
             for c_type, url in type_url:
               if c_type in line:
                 line = line.replace(c_type, url)
-            md += ["", line]
+            md += ["", line.lstrip()]
         else:
             md += [line]
     if is_code:
         md += doc_code_block(code, language)
-    return md
+    return md + [""]
 
 def doc2md(module, title, min_level=1, more_info=False, toc=True):
     """
@@ -198,7 +198,9 @@ def doc2md(module, title, min_level=1, more_info=False, toc=True):
     docstr = module.__doc__
     if module.__doc__ is None:
       docstr = ""
-
+    if inspect.isclass(module) and module.__init__.__doc__:
+        t = module.__init__.__doc__
+        docstr += "\n\n" + t + "\n\n"
     text = doctrim(docstr)
     lines = text.split('\n')
     sections = find_sections(lines)
@@ -222,17 +224,18 @@ def doc2md(module, title, min_level=1, more_info=False, toc=True):
         title = t[t.find(title):t.find(":")]
     elif inspect.isclass(module):
         t = inspect.getsource(module.__init__).split("\n")[0]
-        title = t[t.find(title):t.find(":")]
+        title = title + t[t.find("("):t.find(":")]
+        level += 1
     elif inspect.ismethod(module):
         t = inspect.getsource(module).split("\n")[0]
         title = t[t.find(title):t.find(":")]
     else:
         raise Exception("Not Known type ? %s" % module)
-
+    if title.startswith("_"):
+        title = "\\" + title
     md = [ make_heading(level, title), ""]
-
     while len(lines) > 0 and not lines[0].lstrip().startswith(":"):
-      md.append("    " + lines.pop(0).lstrip())
+      md.append(lines.pop(0).lstrip())
     md.append("")
     if toc:
         md += make_toc(sections)
@@ -246,7 +249,6 @@ def class2md(cls, title, min_level=1, more_info=False, toc=True):
     """
     Convert a class to a markdown text.
     """
-
     md, sec = doc2md(cls, title,
                      min_level=min_level, more_info=True, toc=False)
     for entry in sorted(inspect.getmembers(cls)):
